@@ -28,15 +28,17 @@ request/retry, and media code was inspected. The selected Keychain adapter is
 Dynamic backend selection and plaintext backends are not used. Keyring 25.7 uses
 SecItem APIs and ignores custom keychain paths; the adapter explicitly clears
 `KEYCHAIN_PATH` selection and uses the normal macOS user Keychain. A new-item
-test through SSH returned macOS status -25308 (interaction not allowed), so
-credential setup must run in the user's local Terminal and honor normal Keychain
-prompts.
+test through SSH returned macOS status -25308 (interaction not allowed).
+Credential setup runs in the user's local Terminal and honors normal Keychain
+prompts. Live verification subsequently confirmed that a launch agent in the
+logged-in desktop session can read the saved credential and authorize Keep,
+while the SSH session cannot. No Keychain permissions or security settings were
+relaxed.
 
 The first advisory scan found the same pip advisory twice (`PYSEC-2026-3721` /
 `CVE-2026-13346`) in the development interpreter's `pip 26.1.2`; no application
-dependency advisory was reported. That isolated development installer is being
-upgraded to 26.2.1. Diprotodon's environment already resolved pip 26.2.1. Record
-the final locked scan below after testing.
+dependency advisory was reported. That isolated development installer was
+upgraded to 26.2.1. Diprotodon's environment also resolved pip 26.2.1.
 
 `gkeepapi` is an unofficial Google client and its master token is broader than
 Keep. The implementation retains certificate verification and normal macOS
@@ -66,13 +68,30 @@ process memory while in use; the service does not persist a note cache.
 
 ## Verification
 
-115 tests pass with 89.7% source coverage on both the development Mac and
-Diprotodon (Python 3.14.6 and 3.12.13), including the original cases adapted to
-the guarded API. Both dependency scans report no known vulnerabilities. Tests
+165 tests pass on both the development Mac and Diprotodon (Python 3.14.6 and
+3.12.13), including the original cases adapted to the guarded API. Final source
+coverage on D is 93%. Dependency scans report no known vulnerabilities. Tests
 cover the real stdio MCP handshake and actionable credential errors; token
 redaction; Keychain-only selection; every existing-note write boundary; stale
 versions; cross-process locking; deletion expiry, target binding and reuse;
 failed-write cache discard; audit failure; and media containment. A wheel and
-source distribution build successfully. Real-account verification requires local
-Google sign-in; offline tests do not establish that Google will accept a
-particular account.
+source distribution build successfully.
+
+Live Google authorization and read synchronization passed from the desktop
+session. Real stdio MCP checks passed for creation, editing, stale-revision
+rejection, color, pinning, archive/unarchive, trash/restore, and checklist
+edits. All three disposable notes created across setup checks were left in
+recoverable trash; no permanent deletion or collaboration changes were exercised
+live. ChatGPT connected through the private tunnel and discovered 5 read and 19
+write tools. Phone interaction and a full Mac reboot were not independently
+tested.
+
+The initial read exposed a gkeepapi 0.17.1 bug: its annotation factory returns
+`None` for unknown types, then the container dereferences `annotation.id`. The
+compatibility adapter extends that existing factory and preserves unknown
+annotations as opaque data, including nested context entries, instead of
+dropping them. Regression tests verify round-trip retention through edits and
+revision checks. Setup now stores a credential after Google authorizes Keep,
+before the first read, so a parser error cannot discard a verified login. Safe
+diagnostics include only an allowlisted error category and module/line location;
+credentials, note contents, raw responses, and exception text remain hidden.

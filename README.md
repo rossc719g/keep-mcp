@@ -75,6 +75,11 @@ MFA, certificate validation, endpoint protection, or macOS security to get a
 login working. If Google refuses the normal flow, stop and resolve that with
 Google.
 
+On Diprotodon, Keychain access succeeds in the logged-in desktop session and its
+launch agents, but is denied to SSH sessions. Run interactive setup and checks
+locally, or run the service in its normal desktop launch-agent context. An SSH
+Keychain error does not mean the saved token is invalid.
+
 To revoke access, stop the clients/tunnel and revoke the corresponding Google
 account access, then remove the Keychain item and email configuration locally.
 Deleting the local item alone does not revoke a credential at Google.
@@ -154,6 +159,8 @@ connection.
   edit.
 - A failed operation discards its cached client. Dirty edits are not queued for
   a later read, and ambiguous writes are never automatically retried.
+- Unrecognized Keep annotations are preserved through reads and edits. The
+  pinned library's parser is extended without discarding those fields.
 - Global label deletion requires the label revision from `list_labels`, checks
   every affected note, and cannot delete the global `AI` authorization label.
 
