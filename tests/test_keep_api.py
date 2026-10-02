@@ -46,9 +46,12 @@ class DummyNote:
         self.archived = False
         self.trashed = False
         self.color = SimpleNamespace(value="white")
-        self.labels = DummyLabels([SimpleNamespace(id="l1", name="keep-mcp")])
+        self.labels = DummyLabels([SimpleNamespace(id="l1", name="AI")])
         self.collaborators = DummyCollaborators(["alice@example.com"])
         self.blobs = [DummyBlobNode("b1", "IMAGE")]
+
+    def save(self, clean=False):
+        return {"id": self.id, "title": self.title, "text": self.text}
 
 
 class DummyListNote(DummyNote):
@@ -67,7 +70,7 @@ class DummyListNote(DummyNote):
 def test_serialize_note_for_note_type():
     data = serialize_note(DummyNote())
     assert data["id"] == "n1"
-    assert data["labels"][0]["name"] == "keep-mcp"
+    assert data["labels"][0]["name"] == "AI"
     assert data["collaborators"] == ["alice@example.com"]
     assert data["media"][0]["type"] == "IMAGE"
     assert "items" not in data
@@ -108,6 +111,15 @@ class DummyResponse:
         self.content = content
         self.headers = {"Content-Type": content_type}
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def iter_content(self, size):
+        yield self.content
+
     def raise_for_status(self):
         if self.status_code >= 400:
             raise AssertionError(f"HTTP {self.status_code}")
@@ -117,7 +129,7 @@ def test_fetch_blob_bytes_rides_authenticated_send():
     sent = {}
 
     class DummyMediaAPI:
-        def _send(self, url, method):
+        def _send(self, url, method, **kwargs):
             sent["url"] = url
             sent["method"] = method
             return DummyResponse()
@@ -126,30 +138,30 @@ def test_fetch_blob_bytes_rides_authenticated_send():
         _media_api = DummyMediaAPI()
 
         def getMediaLink(self, blob):
-            return f"https://media/{blob.id}"
+            return f"https://keep.google.com/media/{blob.id}"
 
     content, content_type = fetch_blob_bytes(DummyKeep(), SimpleNamespace(id="b1"))
-    assert sent == {"url": "https://media/b1", "method": "GET"}
+    assert sent == {"url": "https://keep.google.com/media/b1", "method": "GET"}
     assert content == b"bytes"
     assert content_type == "image/png"
 
 
 def test_fetch_blob_bytes_retries_bare_on_403():
     class DummySession:
-        def get(self, url):
+        def get(self, url, **kwargs):
             return DummyResponse(content=b"bare-bytes")
 
     class DummyMediaAPI:
         _session = DummySession()
 
-        def _send(self, url, method):
+        def _send(self, url, method, **kwargs):
             return DummyResponse(status_code=403)
 
     class DummyKeep:
         _media_api = DummyMediaAPI()
 
         def getMediaLink(self, blob):
-            return "https://media/b1"
+            return "https://keep.google.com/media/b1"
 
     content, _ = fetch_blob_bytes(DummyKeep(), SimpleNamespace(id="b1"))
     assert content == b"bare-bytes"
@@ -160,11 +172,11 @@ def test_can_modify_note_respects_label(monkeypatch):
     assert can_modify_note(DummyNote()) is True
 
 
-def test_can_modify_note_respects_unsafe_mode(monkeypatch):
+def test_can_modify_note_ignores_unsafe_mode(monkeypatch):
     monkeypatch.setenv("UNSAFE_MODE", "true")
     note = DummyNote()
     note.labels = DummyLabels([])
-    assert can_modify_note(note) is True
+    assert can_modify_note(note) is False
 
 
 def test_can_modify_note_false_without_label_or_unsafe(monkeypatch):

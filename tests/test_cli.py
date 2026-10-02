@@ -4,12 +4,13 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from conftest import requested
 
 from server import cli
 
 
 class DummyLabel:
-    def __init__(self, label_id="l1", name="keep-mcp"):
+    def __init__(self, label_id="l1", name="AI"):
         self.id = label_id
         self.name = name
 
@@ -22,7 +23,9 @@ class DummyLabels:
         self._labels.append(label)
 
     def remove(self, label):
-        self._labels = [existing for existing in self._labels if existing.id != label.id]
+        self._labels = [
+            existing for existing in self._labels if existing.id != label.id
+        ]
 
     def all(self):
         return self._labels
@@ -84,6 +87,20 @@ class DummyNote:
         self.blobs = [DummyBlob()]
         self.deleted = False
 
+    def save(self, clean=False):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "text": self.text,
+            "pinned": self.pinned,
+            "archived": self.archived,
+            "trashed": self.trashed,
+            "deleted": self.deleted,
+            "color": self.color.value,
+            "collaborators": self.collaborators.all(),
+            "items": [vars(item) for item in getattr(self, "items", [])],
+        }
+
     def delete(self):
         self.deleted = True
 
@@ -104,7 +121,7 @@ class DummyList(DummyNote):
         self.items = []
 
     def add(self, text, checked=False):
-        item = DummyItem(f"i{len(self.items)+1}", text, checked)
+        item = DummyItem(f"i{len(self.items) + 1}", text, checked)
         self.items.append(item)
         return item
 
@@ -118,7 +135,7 @@ class DummyList(DummyNote):
 class DummyKeep:
     def __init__(self):
         self.notes = {}
-        self._labels = {"l1": DummyLabel("l1", "keep-mcp")}
+        self._labels = {"l1": DummyLabel("l1", "AI")}
         self.sync_calls = 0
 
     def sync(self):
@@ -154,7 +171,7 @@ class DummyKeep:
         return None
 
     def createLabel(self, name):
-        label = DummyLabel("new", name)
+        label = DummyLabel("new-" + name, name)
         self._labels[label.id] = label
         return label
 
@@ -178,9 +195,9 @@ class DummyKeep:
 def keep(monkeypatch):
     keep = DummyKeep()
     keep.notes["n1"] = DummyNote("n1")
-    keep.notes["n1"].labels.add(DummyLabel("l1", "keep-mcp"))
+    keep.notes["n1"].labels.add(DummyLabel("l1", "AI"))
     keep.notes["list1"] = DummyList("list1")
-    keep.notes["list1"].labels.add(DummyLabel("l1", "keep-mcp"))
+    keep.notes["list1"].labels.add(DummyLabel("l1", "AI"))
     keep.notes["list1"].add("existing", checked=False)
 
     monkeypatch.setattr(cli, "get_client", lambda: keep)
@@ -244,9 +261,30 @@ def test_find_date_filter_func(keep):
         )
 
     utc = timezone.utc
-    assert within(note_with(datetime(2026, 7, 15, tzinfo=utc), datetime(2026, 7, 20, tzinfo=utc))) is True
-    assert within(note_with(datetime(2026, 6, 15, tzinfo=utc), datetime(2026, 7, 20, tzinfo=utc))) is False
-    assert within(note_with(datetime(2026, 7, 15, tzinfo=utc), datetime(2026, 8, 2, tzinfo=utc))) is False
+    assert (
+        within(
+            note_with(
+                datetime(2026, 7, 15, tzinfo=utc), datetime(2026, 7, 20, tzinfo=utc)
+            )
+        )
+        is True
+    )
+    assert (
+        within(
+            note_with(
+                datetime(2026, 6, 15, tzinfo=utc), datetime(2026, 7, 20, tzinfo=utc)
+            )
+        )
+        is False
+    )
+    assert (
+        within(
+            note_with(
+                datetime(2026, 7, 15, tzinfo=utc), datetime(2026, 8, 2, tzinfo=utc)
+            )
+        )
+        is False
+    )
     # Naive timestamps (older gkeepapi) are treated as UTC, not an error.
     assert within(note_with(datetime(2026, 7, 15), datetime(2026, 7, 20))) is True  # noqa: DTZ001
     assert within(SimpleNamespace(timestamps=None)) is False
@@ -278,73 +316,82 @@ def test_get_note(keep):
 
 
 def test_create_note_labels_and_sync(keep):
-    data = json.loads(cli.create_note("t", "body"))
+    data = json.loads(requested(cli.create_note, "t", "body"))
     assert data["id"] == "created"
-    assert keep.sync_calls == 1
+    assert keep.sync_calls == 2
 
 
 def test_create_note_creates_label_when_missing(keep):
     keep._labels = {}
-    data = json.loads(cli.create_note("t", "body"))
-    assert data["labels"][0]["name"] == "keep-mcp"
+    data = json.loads(requested(cli.create_note, "t", "body"))
+    assert data["labels"][0]["name"] == "AI"
 
 
 def test_create_list_variants(keep):
-    data = json.loads(cli.create_list("list"))
+    data = json.loads(requested(cli.create_list, "list"))
     assert data["id"] == "created_list"
     data_with_items = json.loads(
-        cli.create_list("list", items=[{"text": "a", "checked": True}])
+        requested(cli.create_list, "list", items=[{"text": "a", "checked": True}])
     )
     assert data_with_items["items"][0]["checked"] is True
 
 
 def test_create_list_creates_label_when_missing(keep):
     keep._labels = {}
-    data = json.loads(cli.create_list("list"))
-    assert data["labels"][0]["name"] == "keep-mcp"
+    data = json.loads(requested(cli.create_list, "list"))
+    assert data["labels"][0]["name"] == "AI"
 
 
 def test_update_note_updates_fields(keep):
-    data = json.loads(cli.update_note("n1", title="new", text="changed"))
+    data = json.loads(requested(cli.update_note, "n1", title="new", text="changed"))
     assert data["title"] == "new"
     assert data["text"] == "changed"
 
 
 def test_update_note_not_found_raises(keep):
     with pytest.raises(ValueError, match="not found"):
-        cli.update_note("missing", title="x")
+        requested(cli.update_note, "missing", title="x")
 
 
 def test_list_item_roundtrip(keep):
-    add = json.loads(cli.add_list_item("list1", "task", checked=True))
+    add = json.loads(requested(cli.add_list_item, "list1", "task", checked=True))
     item_id = add["item_id"]
     updated = json.loads(
-        cli.update_list_item("list1", item_id, text="task2", checked=False)
+        requested(cli.update_list_item, "list1", item_id, text="task2", checked=False)
     )
     assert any(item["id"] == item_id for item in updated["items"])
 
 
 def test_update_list_item_missing_item_raises(keep):
     with pytest.raises(ValueError, match="not found"):
-        cli.update_list_item("list1", "missing", text="x")
+        requested(cli.update_list_item, "list1", "missing", text="x")
 
 
 def test_delete_list_item_paths(keep):
     with pytest.raises(ValueError, match="not found"):
-        cli.delete_list_item("list1", "missing")
+        requested(cli.delete_list_item, "list1", "missing")
 
-    new_item_id = json.loads(cli.add_list_item("list1", "task"))["item_id"]
-    data = json.loads(cli.delete_list_item("list1", new_item_id))
+    new_item_id = json.loads(requested(cli.add_list_item, "list1", "task"))["item_id"]
+    first = json.loads(requested(cli.delete_list_item, "list1", new_item_id))
+    data = json.loads(
+        requested(
+            cli.delete_list_item,
+            "list1",
+            new_item_id,
+            confirmation_token=first["confirmation_token"],
+            permanently_delete=True,
+        )
+    )
     assert "marked for deletion" in data["message"]
 
 
 def test_list_item_requires_list_type(keep):
     with pytest.raises(TypeError, match="not a list"):
-        cli.add_list_item("n1", "x")
+        requested(cli.add_list_item, "n1", "x")
     with pytest.raises(TypeError, match="not a list"):
-        cli.update_list_item("n1", "i1", text="x")
+        requested(cli.update_list_item, "n1", "i1", text="x")
     with pytest.raises(TypeError, match="not a list"):
-        cli.delete_list_item("n1", "i1")
+        requested(cli.delete_list_item, "n1", "i1")
 
 
 def test_set_note_color_validates(keep, monkeypatch):
@@ -353,19 +400,28 @@ def test_set_note_color_validates(keep, monkeypatch):
 
     monkeypatch.setattr(cli.gkeepapi.node, "ColorValue", bad_color)
     with pytest.raises(ValueError, match="Invalid color"):
-        cli.set_note_color("n1", "invalid")
+        requested(cli.set_note_color, "n1", "invalid")
 
 
 def test_note_state_transitions(keep):
-    assert json.loads(cli.set_note_color("n1", "red"))["color"] == "red"
-    assert json.loads(cli.pin_note("n1", True))["pinned"] is True
-    assert json.loads(cli.archive_note("n1", True))["archived"] is True
-    assert json.loads(cli.trash_note("n1"))["trashed"] is True
-    assert json.loads(cli.restore_note("n1"))["trashed"] is False
+    assert json.loads(requested(cli.set_note_color, "n1", "red"))["color"] == "red"
+    assert json.loads(requested(cli.pin_note, "n1", True))["pinned"] is True
+    assert json.loads(requested(cli.archive_note, "n1", True))["archived"] is True
+    assert json.loads(requested(cli.trash_note, "n1"))["trashed"] is True
+    assert json.loads(requested(cli.restore_note, "n1"))["trashed"] is False
 
 
 def test_delete_note_marks_deleted(keep):
-    msg = json.loads(cli.delete_note("n1"))
+    first = json.loads(requested(cli.delete_note, "n1"))
+    assert not keep.notes["n1"].deleted
+    msg = json.loads(
+        requested(
+            cli.delete_note,
+            "n1",
+            confirmation_token=first["confirmation_token"],
+            permanently_delete=True,
+        )
+    )
     assert "marked for deletion" in msg["message"]
 
 
@@ -373,23 +429,31 @@ def test_label_crud_and_missing_label_errors(keep):
     labels = json.loads(cli.list_labels())
     assert labels
 
-    created = json.loads(cli.create_label("other"))
+    created = json.loads(requested(cli.create_label, "other"))
     assert created["name"] == "other"
-    message = json.loads(cli.delete_label(created["id"]))
+    first = json.loads(requested(cli.delete_label, created["id"]))
+    message = json.loads(
+        requested(
+            cli.delete_label,
+            created["id"],
+            confirmation_token=first["confirmation_token"],
+            permanently_delete=True,
+        )
+    )
     assert "marked for deletion" in message["message"]
 
-    with pytest.raises(ValueError, match="Label with ID bad not found"):
-        cli.delete_label("bad")
-    with pytest.raises(ValueError, match="Label with ID bad not found"):
-        cli.add_label_to_note("n1", "bad")
-    with pytest.raises(ValueError, match="Label with ID bad not found"):
-        cli.remove_label_from_note("n1", "bad")
+    with pytest.raises(ValueError, match="not found"):
+        requested(cli.delete_label, "bad")
+    with pytest.raises(ValueError, match="not found"):
+        requested(cli.add_label_to_note, "n1", "bad")
+    with pytest.raises(ValueError, match="not found"):
+        requested(cli.remove_label_from_note, "n1", "bad")
 
 
 def test_delete_label_safe_mode_guards(keep, monkeypatch):
     # Deleting the keep-mcp label is blocked in safe mode.
-    with pytest.raises(ValueError, match="keep-mcp"):
-        cli.delete_label("l1")
+    with pytest.raises(ValueError, match="AI"):
+        requested(cli.delete_label, "l1")
 
     # Deleting a label that is on an unmanaged note is also blocked in safe mode.
     unmanaged = DummyNote("unmanaged")  # no keep-mcp label
@@ -397,20 +461,19 @@ def test_delete_label_safe_mode_guards(keep, monkeypatch):
     keep._labels["shared"] = shared
     unmanaged.labels.add(shared)
     keep.notes["unmanaged"] = unmanaged
-    with pytest.raises(ValueError, match="unmanaged"):
-        cli.delete_label("shared")
+    with pytest.raises(ValueError, match="without the"):
+        requested(cli.delete_label, "shared")
 
-    # UNSAFE_MODE bypasses both guards.
     monkeypatch.setenv("UNSAFE_MODE", "true")
-    msg = json.loads(cli.delete_label("shared"))
-    assert "marked for deletion" in msg["message"]
+    with pytest.raises(ValueError, match="without the"):
+        requested(cli.delete_label, "shared")
 
 
 def test_label_add_remove(keep):
     keep._labels["l2"] = DummyLabel("l2", "other")
-    add = json.loads(cli.add_label_to_note("n1", "l2"))
+    add = json.loads(requested(cli.add_label_to_note, "n1", "l2"))
     assert any(label["id"] == "l2" for label in add["labels"])
-    remove = json.loads(cli.remove_label_from_note("n1", "l2"))
+    remove = json.loads(requested(cli.remove_label_from_note, "n1", "l2"))
     assert all(label["id"] != "l2" for label in remove["labels"])
 
 
@@ -418,9 +481,11 @@ def test_collaborator_list_add_remove(keep):
     before = json.loads(cli.list_note_collaborators("n1"))
     assert before == []
 
-    data = json.loads(cli.add_note_collaborator("n1", "user@example.com"))
+    data = json.loads(requested(cli.add_note_collaborator, "n1", "user@example.com"))
     assert "user@example.com" in data["collaborators"]
-    after = json.loads(cli.remove_note_collaborator("n1", "user@example.com"))
+    after = json.loads(
+        requested(cli.remove_note_collaborator, "n1", "user@example.com")
+    )
     assert "user@example.com" not in after["collaborators"]
 
 
@@ -430,8 +495,10 @@ def test_list_note_media(keep):
 
 
 def test_download_media_writes_files(keep, monkeypatch, tmp_path):
-    monkeypatch.setattr(cli, "fetch_blob_bytes", lambda k, b: (b"png-bytes", "image/png"))
-    saved = json.loads(cli.download_media("n1", str(tmp_path)))
+    monkeypatch.setattr(
+        cli, "fetch_blob_bytes", lambda k, b: (b"png-bytes", "image/png")
+    )
+    saved = json.loads(requested(cli.download_media, "n1", "test"))
     assert saved[0]["blob_id"] == "b1"
     assert saved[0]["type"] == "IMAGE"
     assert saved[0]["path"].endswith("b1.png")
@@ -442,14 +509,13 @@ def test_download_media_writes_files(keep, monkeypatch, tmp_path):
 
 def test_download_media_unknown_blob(keep, tmp_path):
     with pytest.raises(ValueError, match="Blob with ID nope not found"):
-        cli.download_media("n1", str(tmp_path), blob_id="nope")
+        requested(cli.download_media, "n1", str(tmp_path), blob_id="nope")
 
 
 def test_modification_guard_blocks_when_unlabeled(keep, monkeypatch):
     keep.notes["n1"].labels = DummyLabels()
-    monkeypatch.setattr(cli, "can_modify_note", lambda _: False)
     with pytest.raises(ValueError, match="cannot be modified"):
-        cli.update_note("n1", title="x")
+        requested(cli.update_note, "n1", title="x")
 
 
 def test_main_runs_stdio_transport(monkeypatch):

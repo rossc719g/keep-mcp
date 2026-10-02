@@ -1,128 +1,120 @@
-"""Basic real-account smoke test for keep-mcp server logic.
+"""Exercise the real stdio transport without printing private Keep data."""
 
-Usage:
-  GOOGLE_EMAIL=... GOOGLE_MASTER_TOKEN=... python scripts/smoke_test.py
-
-This script performs a lifecycle against Google Keep:
-- create note
-- update note
-- set color
-- pin/unpin
-- archive/unarchive
-- trash/restore
-- delete
-- create list + add/update/delete list items
-- label CRUD and association
-
-It is intended for manual verification, not CI.
-"""
-
+import argparse
+import asyncio
 import json
-import os
 import sys
-from pathlib import Path
+import uuid
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
-from server import cli
+
+async def run(write_fixtures):
+    async with stdio_client(
+        StdioServerParameters(command=sys.executable, args=["-m", "server"])
+    ) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            await session.initialize()
+            assert len((await session.list_tools()).tools) == 24
+
+            async def call(name, **arguments):
+                result = await session.call_tool(name, arguments)
+                if result.is_error:
+                    raise RuntimeError(
+                        "Keep smoke request failed. Inspect the private audit log and the test fixtures before retrying; nothing is retried automatically."
+                    )
+                return json.loads(result.content[0].text)
+
+            await call("find", limit=1)
+            print("Read synchronization through the MCP connection succeeded.")
+            if not write_fixtures:
+                return
+            marker = "Keep MCP test " + uuid.uuid4().hex[:12]
+            note = await call(
+                "create_note",
+                title=marker,
+                text="Disposable setup fixture",
+                user_requested=True,
+            )
+            original = note["revision"]
+            note = await call(
+                "update_note",
+                note_id=note["id"],
+                text="Updated fixture",
+                expected_revision=original,
+                user_requested=True,
+            )
+            stale = await session.call_tool(
+                "update_note",
+                {
+                    "note_id": note["id"],
+                    "text": "Must not overwrite",
+                    "expected_revision": original,
+                    "user_requested": True,
+                },
+            )
+            assert stale.is_error and "Conflict" in stale.content[0].text
+            for name, extra in [
+                ("set_note_color", {"color": "BLUE"}),
+                ("pin_note", {"pinned": True}),
+                ("archive_note", {"archived": True}),
+                ("archive_note", {"archived": False}),
+                ("trash_note", {}),
+                ("restore_note", {}),
+                ("trash_note", {}),
+            ]:
+                note = await call(
+                    name,
+                    note_id=note["id"],
+                    expected_revision=note["revision"],
+                    user_requested=True,
+                    **extra,
+                )
+            checklist = await call(
+                "create_list",
+                title=marker + " list",
+                items=[{"text": "Disposable item", "checked": False}],
+                user_requested=True,
+            )
+            checklist = await call(
+                "update_list_item",
+                note_id=checklist["id"],
+                item_id=checklist["items"][0]["id"],
+                checked=True,
+                expected_revision=checklist["revision"],
+                user_requested=True,
+            )
+            await call(
+                "trash_note",
+                note_id=checklist["id"],
+                expected_revision=checklist["revision"],
+                user_requested=True,
+            )
+            print(
+                "Fixture writes, stale-revision rejection, and recoverable cleanup succeeded."
+            )
+            print(
+                "Two uniquely named test notes remain in Google Keep trash. Nothing was permanently deleted."
+            )
 
 
-def main() -> None:
-    if not os.getenv("GOOGLE_EMAIL") or not os.getenv("GOOGLE_MASTER_TOKEN"):
-        raise SystemExit("Set GOOGLE_EMAIL and GOOGLE_MASTER_TOKEN before running smoke test")
-
-    # --- Note lifecycle ---
-    print("Creating note...")
-    created = json.loads(cli.create_note(title="keep-mcp smoke", text="hello"))
-    note_id = created["id"]
-    print("Created:", note_id)
-
-    print("Updating note...")
-    updated = json.loads(cli.update_note(note_id, title="keep-mcp smoke updated", text="world"))
-    assert updated["title"] == "keep-mcp smoke updated"
-
-    print("Setting color...")
-    colored = json.loads(cli.set_note_color(note_id, "RED"))
-    assert colored["color"] == "RED"
-    # Reset to default
-    json.loads(cli.set_note_color(note_id, "DEFAULT"))
-
-    print("Pin/unpin...")
-    assert json.loads(cli.pin_note(note_id, True))["pinned"] is True
-    assert json.loads(cli.pin_note(note_id, False))["pinned"] is False
-
-    print("Archive/unarchive...")
-    assert json.loads(cli.archive_note(note_id, True))["archived"] is True
-    assert json.loads(cli.archive_note(note_id, False))["archived"] is False
-
-    print("Trash/restore...")
-    assert json.loads(cli.trash_note(note_id))["trashed"] is True
-    restored = json.loads(cli.restore_note(note_id))
-    assert restored["trashed"] is False
-
-    print("Deleting note...")
-    delete_msg = json.loads(cli.delete_note(note_id))
-    assert "marked for deletion" in delete_msg["message"]
-
-    # --- Checklist lifecycle ---
-    print("Creating list...")
-    lst = json.loads(cli.create_list("keep-mcp smoke list", items=[{"text": "item1", "checked": False}]))
-    list_id = lst["id"]
-    print("List created:", list_id)
-    assert lst["items"][0]["text"] == "item1"
-
-    print("Adding list item...")
-    added = json.loads(cli.add_list_item(list_id, "item2", checked=False))
-    item_id = added["item_id"]
-
-    print("Updating list item...")
-    updated_list = json.loads(cli.update_list_item(list_id, item_id, text="item2 edited", checked=True))
-    edited = next(i for i in updated_list["items"] if i["id"] == item_id)
-    assert edited["text"] == "item2 edited"
-    assert edited["checked"] is True
-
-    print("Deleting list item...")
-    del_item = json.loads(cli.delete_list_item(list_id, item_id))
-    assert "marked for deletion" in del_item["message"]
-
-    print("Deleting list note...")
-    json.loads(cli.delete_note(list_id))
-
-    # --- Label lifecycle ---
-    print("Creating label...")
-    label = json.loads(cli.create_label("keep-mcp-smoke-label"))
-    label_id = label["id"]
-    print("Label created:", label_id)
-
-    print("Listing labels (should include new label)...")
-    labels = json.loads(cli.list_labels())
-    assert any(lb["id"] == label_id for lb in labels)
-
-    print("Creating note for label association...")
-    note_for_label = json.loads(cli.create_note(title="label test"))
-    nfl_id = note_for_label["id"]
-
-    print("Adding label to note...")
-    labeled = json.loads(cli.add_label_to_note(nfl_id, label_id))
-    assert any(lb["id"] == label_id for lb in labeled["labels"])
-
-    print("Removing label from note...")
-    unlabeled = json.loads(cli.remove_label_from_note(nfl_id, label_id))
-    assert all(lb["id"] != label_id for lb in unlabeled["labels"])
-
-    print("Deleting label...")
-    del_label = json.loads(cli.delete_label(label_id))
-    assert "marked for deletion" in del_label["message"]
-
-    print("Cleaning up label test note...")
-    json.loads(cli.delete_note(nfl_id))
-
-    # --- find() ---
-    print("Testing find()...")
-    results = json.loads(cli.find(query="keep-mcp"))
-    assert isinstance(results, list)
-
-    print("Smoke test finished successfully")
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--write-fixtures",
+        action="store_true",
+        help="Explicitly authorize creating, editing, and trashing two disposable test notes.",
+    )
+    args = parser.parse_args()
+    try:
+        asyncio.run(run(args.write_fixtures))
+    except Exception:
+        print(
+            "Smoke test did not complete. Use keep-mcp-setup check; inspect fixture state and the private audit before retrying.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

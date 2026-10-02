@@ -1,278 +1,240 @@
-# keep-mcp
+# Personal Google Keep MCP
 
-MCP server for Google Keep
+A macOS fork of [feuerdev/keep-mcp](https://github.com/feuerdev/keep-mcp), using
+`gkeepapi` for Google Keep access. It retains all 24 upstream tools and runs
+over stdio. It opens no HTTP, public, or LAN listener. ChatGPT can reach it
+through an optional authenticated outgoing OpenAI tunnel.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and required visual evidence.
+Read the [security review](SECURITY_REVIEW.md) for the upstream audit,
+dependency review, and enforcement limits. This is an unofficial Google client,
+not a Google API product. Its Google master token is broader than Keep access.
 
-![keep-mcp](https://github.com/user-attachments/assets/f50c4ae6-4d35-4bb6-a494-51c67385f1b6)
+## Install on macOS
 
-## How to use
+Use [uv](https://docs.astral.sh/uv/) 0.11.15 or newer. The committed `uv.lock`
+fixes application and development dependencies, including hashes.
 
-1. Add the MCP server to your MCP servers:
-
-```json
-  "mcpServers": {
-    "keep-mcp-pipx": {
-      "command": "pipx",
-      "args": [
-        "run",
-        "keep-mcp"
-      ],
-      "env": {
-        "GOOGLE_EMAIL": "Your Google Email",
-        "GOOGLE_MASTER_TOKEN": "Your Google Master Token - see README.md"
-      }
-    }
-  }
+```sh
+git clone git@github.com:rossc719g/keep-mcp.git ~/.local/share/keep-mcp
+cd ~/.local/share/keep-mcp
+uv sync --frozen --python 3.12
+.venv/bin/pytest -q
 ```
 
-Or with `uvx`:
+The deployed branch is `main`. Do not install the upstream PyPI package in place
+of this fork. Linux CI exercises the policy with mock credentials; real login
+requires macOS Keychain. No plaintext credential backend is supported.
 
-```json
-  "mcpServers": {
-    "keep-mcp": {
-      "command": "uvx",
-      "args": [
-        "keep-mcp"
-      ],
-      "env": {
-        "GOOGLE_EMAIL": "Your Google Email",
-        "GOOGLE_MASTER_TOKEN": "Your Google Master Token - see README.md"
-      }
-    }
-  }
+## Google sign-in and Keychain
+
+Run setup in Terminal on the Mac that will serve Keep:
+
+```sh
+~/.local/share/keep-mcp/.venv/bin/keep-mcp-setup exchange
 ```
 
-2. Add your credentials:
+Follow the
+[gpsoauth browser-assisted sign-in flow](https://github.com/simon-weber/gpsoauth#alternative-flow)
+in your own browser. Complete Google's normal sign-in and verification yourself.
+At the helper's hidden prompt, enter the resulting `oauth_token` cookie. It is
+exchanged with Google, validated against Keep, then the master token is saved in
+**login Keychain**, service **`local.keep-mcp.google-master-token`**, with your
+Google account email as the Keychain account. The short-lived browser token is
+not saved. Clear the clipboard if you used it to transfer the token.
 
-* `GOOGLE_EMAIL`: Your Google account email address
-* `GOOGLE_MASTER_TOKEN`: Your Google account master token
+Never paste either token into a chat, command line, source file, environment
+variable, `.env`, or MCP configuration. The helper accepts secrets only through
+hidden interactive input. If you already have a master token, use
+`keep-mcp-setup token`. Check an existing installation with:
 
-### Obtain a Google master token
-
-`keep-mcp` uses [gkeepapi](https://gkeepapi.readthedocs.io/), which connects to Google Keep through an unofficial private API. A Google master token has full access to your account. Treat it like a password and never commit or share it.
-
-Use the browser-assisted token exchange documented by `gpsoauth`. Choose how you want to run the exchange:
-
-* **Local Python:** Follow [`gpsoauth`'s alternative flow](https://github.com/simon-weber/gpsoauth#alternative-flow).
-* **Docker:** Follow [gkeepapi's "Obtaining a Master Token" instructions](https://gkeepapi.readthedocs.io/en/latest/#obtaining-a-master-token). This runs the same exchange without requiring a local Python installation.
-
-Both options require the browser `oauth_token` described in the `gpsoauth` documentation.
-
-Older instructions may ask for your Google password or an app password and call `perform_master_login()`. That flow is unreliable and can return `BadAuthentication`. Use the browser-assisted flow above instead.
-
-## Features
-
-### Query and read tools
-* `find`: Search notes (case-insensitive by default) with optional filters for labels, colors, pinned, archived, trashed, creation/update date ranges (ISO 8601, UTC), and a result limit
-* `get_note`: Get a single note by ID
-
-### Creation and update tools
-* `create_note`: Create a new note with title and text (automatically adds keep-mcp label)
-* `create_list`: Create a checklist note
-* `update_note`: Update a note's title and text
-* `add_list_item`: Add an item to a checklist note
-* `update_list_item`: Update checklist item text and checked state
-* `delete_list_item`: Delete a checklist item
-
-### Note state tools
-* `set_note_color`: Set a note color (valid values: DEFAULT, RED, ORANGE, YELLOW, GREEN, TEAL, BLUE, CERULEAN, PURPLE, PINK, BROWN, GRAY)
-* `pin_note`: Pin or unpin a note
-* `archive_note`: Archive or unarchive a note
-* `trash_note`: Move a note to trash
-* `restore_note`: Restore a trashed/deleted note
-* `delete_note`: Mark a note for deletion
-
-### Labels, collaborators, and media tools
-* `list_labels`: List labels
-* `create_label`: Create a label
-* `delete_label`: Delete a label
-* `add_label_to_note`: Add a label to a note
-* `remove_label_from_note`: Remove a label from a note
-* `list_note_collaborators`: List collaborator emails for a note
-* `add_note_collaborator`: Add a collaborator email to a note
-* `remove_note_collaborator`: Remove a collaborator email from a note
-* `list_note_media`: List media blobs for a note (with media links)
-* `download_media`: Download a note's media (images, drawings, audio) to a local directory through the authenticated session (the raw media links answer 403 to plain HTTP clients)
-
-By default, all destructive and modification operations are restricted to notes that have were created by the MCP server (i.e. have the keep-mcp label). Set `UNSAFE_MODE` to `true` to bypass this restriction.
-
-```
-"env": {
-  ...
-  "UNSAFE_MODE": "true"
-}
+```sh
+~/.local/share/keep-mcp/.venv/bin/keep-mcp-setup check
 ```
 
-## Local development (uv + make)
+`~/.config/keep-mcp/config.json` contains only the account email and has mode
+`0600`, inside a `0700` directory. The backend is explicitly the macOS login
+Keychain; environment-selected or plaintext backends cannot replace it. `.env`
+is never read, and a nonempty `GOOGLE_MASTER_TOKEN` environment variable is
+rejected. Normal Keychain prompts and lock state still apply. Do not disable
+MFA, certificate validation, endpoint protection, or macOS security to get a
+login working. If Google refuses the normal flow, stop and resolve that with
+Google.
 
-If you prefer a JS-style workflow (`npm i`, `npm start`), use the included `Makefile`:
+To revoke access, stop the clients/tunnel and revoke the corresponding Google
+account access, then remove the Keychain item and email configuration locally.
+Deleting the local item alone does not revoke a credential at Google.
 
-```bash
-make install   # like npm i
-make start     # like npm start
-make test
-make lint
+## Connect Codex or another local MCP client
+
+Register the absolute executable path; no credential environment variables are
+needed:
+
+```sh
+codex mcp add keep-mcp -- "$HOME/.local/share/keep-mcp/.venv/bin/keep-mcp"
 ```
 
-Run the real-account smoke test with credentials:
-
-```bash
-GOOGLE_EMAIL="you@example.com" \
-GOOGLE_MASTER_TOKEN="..." \
-make smoke
-```
-
-Equivalent direct `uv` commands (without `make`):
-
-```bash
-UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.11 .venv
-UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python -e .
-UV_CACHE_DIR=/tmp/uv-cache uv run --no-sync --python .venv/bin/python -m server
-```
-
-## Testing
-
-### Unit tests (default)
-The project includes a lightweight unit test suite under `tests/`.
-
-It validates:
-* note serialization shape for note and list objects (including labels, collaborators, media, and list items)
-* modification safety behavior (`keep-mcp` label requirement and `UNSAFE_MODE=true` override)
-* MCP tool behavior in `src/server/cli.py` using mocked Keep client objects (tool happy paths and key error paths)
-
-Run locally:
-
-```bash
-make test
-```
-
-### Smoke test against a real Keep account
-For additional confidence, run a basic lifecycle smoke test against a dedicated test account:
-
-```bash
-GOOGLE_EMAIL="you@example.com" \
-GOOGLE_MASTER_TOKEN="..." \
-make smoke
-```
-
-What it does:
-* create note
-* update note
-* pin/unpin
-* archive/unarchive
-* trash/restore
-* delete
-
-This script is intended for manual verification and is not run in CI.
-
-### CI checks
-GitHub Actions runs on every pull request and executes:
-* lint (`ruff check .`)
-* unit tests with coverage (`pytest -q --cov=src/server --cov-report=term-missing --cov-fail-under=70`)
-* bytecode sanity (`python -m compileall src`)
-
-## Publishing
-
-### Automatic publish on merge to `main` (GitHub Actions)
-
-This repo includes a release workflow at `.github/workflows/release.yml` that runs on every push to `main` (including merged PRs).
-
-It will:
-* inspect commits since the last release tag (`vX.Y.Z`)
-* compute the next semantic version from Conventional Commit types
-* skip publishing when there are no releasable commit types
-* run lint and unit tests
-* build `dist/*`
-* publish to PyPI
-* create a GitHub release/tag `v<computed-version>` with generated notes
-
-Version bump rules:
-* major: commit subject with `!` (example: `feat!:` or `fix(api)!:`) or commit body containing `BREAKING CHANGE`
-* minor: `feat:`
-* patch: `fix:`, `perf:`, `revert:`
-* no release: `docs:`, `chore:`, `ci:`, `test:`, `refactor:` (unless the commit is marked as breaking)
-
-Required repository secret:
-* `PYPI_API_TOKEN`: a PyPI API token (recommended scope: this project only)
-
-### Manual publish
-
-To publish manually to PyPI:
-
-1. Update the version in `pyproject.toml`
-2. Build the package:
-   ```bash
-   pipx run build
-   ```
-3. Upload to PyPI:
-   ```bash
-   pipx run twine upload --repository pypi dist/*
-   ```
-
-## Run locally with MCP clients
-
-This is useful when you want a client to run this server from your local checkout instead of PyPI.
-
-1. Create a local virtualenv and install in editable mode:
-
-```bash
-cd /ABSOLUTE/PATH/TO/keep-mcp
-make install
-```
-
-2. Add the server to your MCP client config.
-
-### `config.toml` clients (Codex, Goose, etc.)
-
-```toml
-[mcp_servers.keep_mcp]
-command = "make"
-args = ["-C", "/ABSOLUTE/PATH/TO/keep-mcp", "start"]
-
-[mcp_servers.keep_mcp.env]
-GOOGLE_EMAIL = "you@example.com"
-GOOGLE_MASTER_TOKEN = "your-master-token"
-UNSAFE_MODE = "false"
-```
-
-### JSON `mcpServers` clients (Claude Desktop, Cursor, Cline, etc.)
+An equivalent generic MCP configuration is:
 
 ```json
 {
   "mcpServers": {
-    "keep-mcp-local": {
-      "command": "make",
-      "args": ["-C", "/ABSOLUTE/PATH/TO/keep-mcp", "start"],
-      "env": {
-        "GOOGLE_EMAIL": "you@example.com",
-        "GOOGLE_MASTER_TOKEN": "your-master-token",
-        "UNSAFE_MODE": "false"
-      }
+    "keep-mcp": {
+      "command": "/Users/YOUR_ACCOUNT/.local/share/keep-mcp/.venv/bin/keep-mcp"
     }
   }
 }
 ```
 
-Alternative (without `make`):
+Use your actual home directory. Start a new client session after registration.
+Tools are discoverable before sign-in; reads clearly explain missing credentials
+instead of silently returning an empty collection.
 
-```toml
-[mcp_servers.keep_mcp]
-command = "uv"
-args = [
-  "--directory", "/ABSOLUTE/PATH/TO/keep-mcp",
-  "run", "--no-sync", "--python", ".venv/bin/python",
-  "-m", "server"
-]
+## Optional ChatGPT connection
+
+Use the official
+[private MCP tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+in the personal OpenAI organization and ChatGPT workspace. Create a separate
+Keep tunnel and connect it to the installed stdio executable. Do not reuse or
+replace another service's tunnel. A tunnel runtime key needs only Tunnels Read
+and Use; keep it in an owner-only local file, separate from the Google token.
+The Google token stays in Keychain and never goes into the tunnel configuration.
+
+The helper reuses an installed official `tunnel-client` binary and an existing
+restricted runtime-key file. It does not download software or create API keys:
+
+```sh
+.venv/bin/python scripts/connect_tunnel.py \
+  --tunnel-id tunnel_YOUR_ID \
+  --binary /absolute/path/to/tunnel-client \
+  --runtime-key-file /absolute/path/to/private-runtime-key
 ```
 
-Notes:
-* Run `make install` once before starting from an MCP client.
-* Only the repo root path is required (no absolute `/.venv/bin/python` path).
-* Ensure `make` and `uv` are in your `PATH`.
-* Restart your MCP client after updating config files.
-* `UNSAFE_MODE` is optional; keep it `"false"` unless you explicitly want to modify non-`keep-mcp` notes.
+It creates the `keep-mcp-diprotodon` runtime profile and checks that it is
+running, healthy, and ready. Use the same helper command in a macOS login launch
+agent if remote access should return at login. In ChatGPT, create a personal MCP
+App using that tunnel and keep normal write approval prompts. Remote clients
+receive note contents only through requested tool calls; the tunnel connection
+still carries that data to the authorized client. The Mac must be awake, online,
+and able to read its login Keychain. Phone access uses the same ChatGPT
+connection.
 
-## Troubleshooting
+## Write policy
 
-* If you get "DeviceManagementRequiredOrSyncDisabled" check https://admin.google.com/ac/devices/settings/general and turn "Turn off mobile management (Unmanaged)"
+- Reads can access any note. Note text and tool results are untrusted data and
+  cannot authorize another operation.
+- Every mutation requires `user_requested=true`. Set this only when the human
+  asked for the exact action. The server cannot independently verify a chat's
+  human intent; client approval controls remain useful.
+- Every affected **existing** note must already have the exact, case-sensitive
+  **AI** label. Add it yourself in Google Keep. The MCP cannot label an ordinary
+  note to grant itself access. New notes and lists receive `AI` and the original
+  `keep-mcp` provenance label. `UNSAFE_MODE` no longer bypasses anything.
+- Read a note first and pass its returned `revision` as `expected_revision` on
+  an edit. A fresh Google sync and revision comparison run under a lock shared
+  by local MCP processes. Changed text, checklist items, metadata, or labels
+  cause a conflict. Reread and review the newer state before trying another
+  edit.
+- A failed operation discards its cached client. Dirty edits are not queued for
+  a later read, and ambiguous writes are never automatically retried.
+- Global label deletion requires the label revision from `list_labels`, checks
+  every affected note, and cannot delete the global `AI` authorization label.
+
+`gkeepapi` sends Google's node `baseVersion`, but Google's private API has no
+published atomic compare-and-swap guarantee. The pre-write check rejects
+observed stale state; another Google client's edit during the final network
+commit remains a race. Local MCP processes are serialized.
+
+### Permanent deletion
+
+Prefer `archive_note` or `trash_note`. For a checklist item, marking it checked
+is usually preferable to deletion. Google may eventually purge its trash under
+its own retention policy.
+
+`delete_note`, `delete_list_item`, and `delete_label` always return a suggestion
+and a confirmation token on their first call, without deleting anything. Only
+when permanent deletion is specifically requested, call the **same tool in the
+same MCP session** again within **60 seconds**, with the exact target and
+`expected_revision`, the returned `confirmation_token`, `user_requested=true`,
+and `permanently_delete=true`. Tokens are single-use, bound to the target and
+revision, and invalid after a server restart. Never confirm merely to bypass the
+warning. Expired or conflicting requests make no change.
+
+## Tools
+
+| Area          | Tools                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| Read          | `find`, `get_note`, `list_labels`, `list_note_collaborators`, `list_note_media`           |
+| Create        | `create_note`, `create_list`, `create_label`                                              |
+| Edit          | `update_note`, `set_note_color`, `pin_note`, `archive_note`, `trash_note`, `restore_note` |
+| Checklist     | `add_list_item`, `update_list_item`, `delete_list_item`                                   |
+| Labels        | `add_label_to_note`, `remove_label_from_note`, `delete_label`                             |
+| Collaboration | `add_note_collaborator`, `remove_note_collaborator`                                       |
+| Delete        | `delete_note`                                                                             |
+| Export        | `download_media`                                                                          |
+
+`find` retains text, label, color, pin, archive, trash, timestamp, and
+result-limit filters. Collaboration changes may share note contents with another
+person and require an explicit request identifying that person.
+
+Media export reads any note but requires explicit permission to create local
+files. Files stay under `~/.local/state/keep-mcp/exports/`, are owner-only,
+never overwrite another file, and are limited to 32 MiB per blob. HTTPS
+downloads are restricted to Google media hosts, with certificate verification,
+bounded requests, and validated redirects. Exported files contain note data;
+remove them locally when no longer needed.
+
+## Audit and troubleshooting
+
+`~/.local/state/keep-mcp/mutations.jsonl` is an owner-only, append-only JSONL
+mutation log. Each request records a random operation ID, tool name, UTC time,
+status, and hashes of affected identifiers. It excludes note titles, bodies,
+URLs, collaborator emails, caller prose, tokens, and confirmation tokens. Intent
+is appended and flushed before a mutation. If that fails, no mutation is sent.
+If the final log append fails, the tool explains that the action may have
+completed and must be inspected before retrying. Unknown outcomes are recorded
+when possible.
+
+The application never truncates or rotates this log. It is not tamper-proof
+against the account owner or administrator. There is no persisted note cache;
+notes and credentials are present in process memory while needed. SDK logs are
+disabled to avoid leaking upstream exception details. Exposed errors contain
+reviewed instructions only.
+
+If Keychain is locked or permission is denied, unlock/authorize it normally on
+the Mac and retry. If Google is unavailable, no edit is queued. If a conflict is
+reported, reread the note. A network failure after sending a write can leave its
+outcome unknown: inspect Keep before retrying. Use the private audit log for
+operation status; it deliberately cannot reconstruct note contents.
+
+For isolated tests, `KEEP_MCP_CONFIG` and `KEEP_MCP_STATE_DIR` override the
+email config path and private state directory. They never select a credential
+backend or weaken write policy.
+
+## Development and verification
+
+```sh
+uv sync --frozen --python 3.12
+uv run --frozen ruff check .
+uv run --frozen pytest -q --cov=src/server --cov-fail-under=70
+uv run --frozen pip-audit
+uv build
+```
+
+The original tests are retained and adapted to explicit intent and revisions.
+Added tests cover credentials, private storage, all existing-note mutators,
+concurrent changes, destructive confirmations, audit failure, failed-write cache
+discard, exports, and actual stdio error messages.
+
+`make smoke` is read-only by default and prints no note contents. To exercise
+writes on uniquely named disposable fixtures, run:
+
+```sh
+uv run --frozen python scripts/smoke_test.py --write-fixtures
+```
+
+This explicitly creates two `AI` fixtures, exercises edits and stale-revision
+rejection, and moves only those fixtures to trash. It never permanently deletes
+anything or shares notes. If a request fails ambiguously, it stops for
+inspection instead of automatically retrying. For public evidence, prefer a
+dedicated test account and follow [Contributing](CONTRIBUTING.md); never publish
+private note contents or raw credential errors.
