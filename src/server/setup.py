@@ -5,6 +5,7 @@ import getpass
 import logging
 import secrets
 import sys
+import warnings
 
 import gkeepapi
 import gpsoauth
@@ -12,6 +13,17 @@ import gpsoauth
 from .credentials import account_email, master_token, store_credentials, validate_email
 from .keep_api import BoundedKeepAPI, BoundedSession
 from .storage import SafetyError
+
+
+def read_secret(prompt):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", getpass.GetPassWarning)
+        try:
+            return getpass.getpass(prompt)
+        except getpass.GetPassWarning:
+            raise SafetyError(
+                "Hidden input is unavailable. Run setup in a local Terminal; credential input must never be echoed."
+            ) from None
 
 
 def check_credentials(email, token):
@@ -54,7 +66,7 @@ def main():
             print(
                 "Instructions: https://github.com/simon-weber/gpsoauth#alternative-flow"
             )
-            oauth = getpass.getpass("Browser oauth_token (hidden): ")
+            oauth = read_secret("Browser oauth_token (hidden): ")
             try:
                 response = gpsoauth.exchange_token(email, oauth, secrets.token_hex(8))
                 token = response.get("Token")
@@ -69,7 +81,7 @@ def main():
                     "Google did not issue a master token. No credential was saved; do not weaken Google security settings."
                 )
         else:
-            token = getpass.getpass("Google master token (hidden): ")
+            token = read_secret("Google master token (hidden): ")
         try:
             check_credentials(email, token)
             store_credentials(email, token)

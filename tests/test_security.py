@@ -1,12 +1,14 @@
 import asyncio
 import inspect
 import json
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import gkeepapi
 import pytest
+import requests
 
 from server import cli, credentials, keep_api, runtime, setup, storage
 from server.safety import (
@@ -104,6 +106,38 @@ def test_setup_checks_credentials_before_keychain_write(monkeypatch):
     with pytest.raises(SystemExit):
         setup.main()
     store.assert_not_called()
+
+
+def test_setup_refuses_getpass_fallback_that_would_echo(monkeypatch):
+    def no_hidden_input(prompt):
+        warnings.warn("Cannot control echo", setup.getpass.GetPassWarning, stacklevel=2)
+        pytest.fail("An echoed credential prompt must never be reached")
+
+    monkeypatch.setattr(setup.getpass, "getpass", no_hidden_input)
+    with pytest.raises(ValueError, match="must never be echoed"):
+        setup.read_secret("Token: ")
+
+
+def test_http_failures_never_replay_keep_requests(monkeypatch):
+    api = keep_api.BoundedKeepAPI()
+    response = Mock()
+    response.raise_for_status.side_effect = requests.HTTPError("private-content-marker")
+    send = Mock(return_value=response)
+    monkeypatch.setattr(api, "_send", send)
+    with pytest.raises(requests.HTTPError):
+        api.send(method="POST", json={"nodes": []})
+    send.assert_called_once()
+
+
+def test_network_policy_keeps_tls_verified_and_stops_redirects(monkeypatch):
+    request = Mock()
+    monkeypatch.setattr(requests.Session, "request", request)
+    session = keep_api.BoundedSession()
+    session.get("https://keep.google.com/test", verify=False, allow_redirects=True)
+    assert session.trust_env is False
+    assert request.call_args.kwargs["verify"] is True
+    assert request.call_args.kwargs["allow_redirects"] is False
+    assert request.call_args.kwargs["timeout"] == (10, 30)
 
 
 def test_reads_allowed_for_unlabelled_notes(real_keep):
@@ -339,6 +373,35 @@ def test_audit_failure_blocks_mutation_before_upload(real_keep, monkeypatch):
             note.id, expected_revision=note_revision(note), user_requested=True
         )
     assert not note.pinned
+
+
+def test_final_audit_failure_reports_completed_edit_without_retry(
+    real_keep, monkeypatch
+):
+    note = ai_note(real_keep)
+    append = runtime.append_audit
+    calls = []
+
+    def fail_outcome(record):
+        calls.append(record)
+        if len(calls) > 1:
+            raise OSError("disk full")
+        append(record)
+
+    monkeypatch.setattr(runtime, "append_audit", fail_outcome)
+    with pytest.raises(ValueError, match="operation completed"):
+        cli.pin_note(
+            note.id, expected_revision=note_revision(note), user_requested=True
+        )
+    assert note.pinned
+    assert real_keep.sync.call_count == 2
+    records = [
+        json.loads(line)
+        for line in (storage.state_directory() / "mutations.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    assert [record["status"] for record in records] == ["started"]
 
 
 def test_failed_sync_discards_dirty_client_and_never_retries(real_keep, monkeypatch):

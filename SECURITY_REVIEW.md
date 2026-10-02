@@ -61,7 +61,7 @@ process memory while in use; the service does not persist a note cache.
 
 ## Verification
 
-111 tests pass with 88% source coverage on the development Mac, including the
+115 tests pass with 89% source coverage on the development Mac, including the
 original cases adapted to the guarded API. Tests cover the real stdio MCP
 handshake and actionable credential errors; token redaction; Keychain-only
 selection; every existing-note write boundary; stale versions; cross-process

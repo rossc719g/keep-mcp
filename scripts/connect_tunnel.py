@@ -69,33 +69,18 @@ def main():
     if status.returncode:
         raise SystemExit("Keep tunnel connected but its status could not be checked.")
     data = json.loads(status.stdout)
-    # Status envelopes vary between tunnel-client releases; never print logs.
-    states = []
-
-    def collect(value):
-        if isinstance(value, dict):
-            for name, item in value.items():
-                if name in {
-                    "status",
-                    "state",
-                    "health",
-                    "ready",
-                    "running",
-                    "healthy",
-                } and isinstance(item, (str, bool)):
-                    states.append((name, item))
-                elif isinstance(item, (dict, list)) and name != "logs":
-                    collect(item)
-        elif isinstance(value, list):
-            for item in value:
-                collect(item)
-
-    collect(data)
-    print(
-        json.dumps(
-            {"alias": ALIAS, "tunnel_id": args.tunnel_id, "status_fields": states}
+    summary = {
+        "alias": ALIAS,
+        "tunnel_id": args.tunnel_id,
+        "running": data.get("process_running") is True,
+        "healthy": data.get("healthy") is True,
+        "ready": data.get("ready") is True,
+    }
+    print(json.dumps(summary))
+    if not all(summary[field] for field in ("running", "healthy", "ready")):
+        raise SystemExit(
+            "Keep tunnel is not ready. Check the private runtime status before connecting ChatGPT."
         )
-    )
 
 
 if __name__ == "__main__":
