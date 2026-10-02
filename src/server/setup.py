@@ -15,6 +15,44 @@ from .keep_api import BoundedKeepAPI, BoundedSession
 from .storage import SafetyError
 
 
+def exchange_error(response):
+    guidance = {
+        "BadAuthentication": (
+            "Google rejected the browser credential. Use a fresh oauth_token cookie "
+            "from the same Google account as the email entered here. Copy only its Value."
+        ),
+        "NeedsBrowser": (
+            "Google requires browser verification. Complete its normal sign-in and "
+            "any account-verification prompts, then obtain a fresh oauth_token."
+        ),
+        "CaptchaRequired": (
+            "Google requires an interactive verification. Complete normal Google "
+            "sign-in in your browser before obtaining a fresh oauth_token."
+        ),
+        "InvalidSecondFactor": (
+            "Google did not accept the sign-in verification. Complete its normal "
+            "two-step verification in your browser before obtaining a fresh oauth_token."
+        ),
+        "MissingDroidguard": (
+            "This authentication library could not satisfy Google's device-verification "
+            "requirements. Stop here; repeated cookie entry may not resolve this."
+        ),
+        "ServiceDisabled": "Google has disabled access to this service for the account.",
+        "AccountDisabled": "Google reports that the account is disabled.",
+    }
+    code = response.get("Error")
+    if not isinstance(code, str) or code not in guidance:
+        code = "UnrecognizedResponse"
+        detail = "Google returned no master token and no recognized error code."
+    else:
+        detail = guidance[code]
+    # Only fixed, allowlisted messages may leave Google's credential-bearing response.
+    return SafetyError(
+        f"Google token exchange failed ({code}). {detail} "
+        "No credential was saved. Do not weaken Google security settings."
+    )
+
+
 def read_secret(prompt):
     with warnings.catch_warnings():
         warnings.simplefilter("error", getpass.GetPassWarning)
@@ -77,9 +115,7 @@ def main():
             finally:
                 del oauth
             if not token:
-                raise SafetyError(
-                    "Google did not issue a master token. No credential was saved; do not weaken Google security settings."
-                )
+                raise exchange_error(response)
         else:
             token = read_secret("Google master token (hidden): ")
         try:

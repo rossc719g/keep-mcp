@@ -118,6 +118,72 @@ def test_setup_refuses_getpass_fallback_that_would_echo(monkeypatch):
         setup.read_secret("Token: ")
 
 
+@pytest.mark.parametrize(
+    "error, expected",
+    [
+        ("BadAuthentication", "BadAuthentication"),
+        ("NeedsBrowser", "NeedsBrowser"),
+        ("CaptchaRequired", "CaptchaRequired"),
+        ("InvalidSecondFactor", "InvalidSecondFactor"),
+        ("MissingDroidguard", "MissingDroidguard"),
+        ("ServiceDisabled", "ServiceDisabled"),
+        ("AccountDisabled", "AccountDisabled"),
+        (None, "UnrecognizedResponse"),
+        ("BadAuthentication secret-response-marker", "UnrecognizedResponse"),
+        ({"unexpected": "secret-response-marker"}, "UnrecognizedResponse"),
+    ],
+)
+def test_setup_exchange_error_redacts_response_and_does_not_store(
+    monkeypatch, capsys, error, expected
+):
+    monkeypatch.setattr(
+        setup.sys, "argv", ["keep-mcp-setup", "exchange", "--email", "test@example.com"]
+    )
+    monkeypatch.setattr(setup.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(setup.getpass, "getpass", lambda _: "secret-browser-marker")
+    exchange = Mock(
+        return_value={
+            "Error": error,
+            "ErrorDetail": "secret-response-marker",
+            "Url": "https://accounts.google.com/secret-response-marker",
+            "Auth": "secret-response-marker",
+        }
+    )
+    monkeypatch.setattr(setup.gpsoauth, "exchange_token", exchange)
+    store, check = Mock(), Mock()
+    monkeypatch.setattr(setup, "store_credentials", store)
+    monkeypatch.setattr(setup, "check_credentials", check)
+    with pytest.raises(SystemExit) as caught:
+        setup.main()
+    assert caught.value.code == 1
+    output = capsys.readouterr()
+    assert f"({expected})" in output.err
+    assert "No credential was saved" in output.err
+    assert "secret-" not in output.out + output.err
+    exchange.assert_called_once()
+    check.assert_not_called()
+    store.assert_not_called()
+
+
+def test_setup_exchange_exception_never_exposes_credentials(monkeypatch, capsys):
+    monkeypatch.setattr(
+        setup.sys, "argv", ["keep-mcp-setup", "exchange", "--email", "test@example.com"]
+    )
+    monkeypatch.setattr(setup.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(setup.getpass, "getpass", lambda _: "secret-browser-marker")
+    exchange = Mock(side_effect=RuntimeError("secret-browser-marker"))
+    monkeypatch.setattr(setup.gpsoauth, "exchange_token", exchange)
+    store = Mock()
+    monkeypatch.setattr(setup, "store_credentials", store)
+    with pytest.raises(SystemExit):
+        setup.main()
+    output = capsys.readouterr()
+    assert "Google token exchange failed" in output.err
+    assert "secret-browser-marker" not in output.out + output.err
+    exchange.assert_called_once()
+    store.assert_not_called()
+
+
 def test_http_failures_never_replay_keep_requests(monkeypatch):
     api = keep_api.BoundedKeepAPI()
     response = Mock()

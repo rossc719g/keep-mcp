@@ -42,6 +42,15 @@ exchanged with Google, validated against Keep, then the master token is saved in
 Google account email as the Keychain account. The short-lived browser token is
 not saved. Clear the clipboard if you used it to transfer the token.
 
+The Google page may keep loading after **I agree**; the linked instructions say
+to continue by finding the cookie. If exchange fails, the helper displays only a
+recognized error code and fixed guidance, never Google's raw response. A
+`BadAuthentication` result can be retried with a fresh cookie for the same
+account; copy only its Value. `NeedsBrowser` requires completing Google's normal
+verification. Unrecognized errors remain redacted. Share only the helper's error
+message when troubleshooting, never a cookie, response dump, or browser
+screenshot showing credentials.
+
 Never paste either token into a chat, command line, source file, environment
 variable, `.env`, or MCP configuration. The helper accepts secrets only through
 hidden interactive input. If you already have a master token, use
