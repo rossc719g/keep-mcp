@@ -3,6 +3,7 @@ from urllib.parse import urlsplit
 import gkeepapi
 import requests
 
+from . import compat as compat
 from .credentials import account_email, master_token
 from .safety import can_modify_note as can_modify_note
 from .safety import note_revision
