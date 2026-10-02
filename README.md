@@ -37,10 +37,14 @@ Follow the
 [gpsoauth browser-assisted sign-in flow](https://github.com/simon-weber/gpsoauth#alternative-flow)
 in your own browser. Complete Google's normal sign-in and verification yourself.
 At the helper's hidden prompt, enter the resulting `oauth_token` cookie. It is
-exchanged with Google, validated against Keep, then the master token is saved in
-**macOS Keychain**, service **`local.keep-mcp.google-master-token`**, with your
-Google account email as the Keychain account. The short-lived browser token is
-not saved. Clear the clipboard if you used it to transfer the token.
+exchanged with Google, checked for Keep authorization, then the master token is
+saved in **macOS Keychain**, service **`local.keep-mcp.google-master-token`**,
+with your Google account email as the Keychain account. The short-lived browser
+token is not saved. Clear the clipboard if you used it to transfer the token.
+The first Keep read runs after storage, so a note-parsing failure does not
+discard a verified credential. Use `keep-mcp-setup check` to retry that read
+after a repair. The browser cookie is short-lived and single-use; a successful
+exchange consumes it even when a later step fails.
 
 The Google page may keep loading after **I agree**; the linked instructions say
 to continue by finding the cookie. If exchange fails, the helper displays only a

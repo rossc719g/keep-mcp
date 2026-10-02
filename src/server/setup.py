@@ -16,7 +16,7 @@ from .keep_api import BoundedKeepAPI, BoundedSession
 from .storage import SafetyError
 
 
-def authentication_error(code, stage):
+def authentication_error(code, stage, *, credential_saved=False, location=None):
     guidance = {
         "BadAuthentication": (
             "Google rejected the credential at this stage. Use a fresh oauth_token cookie "
@@ -66,10 +66,29 @@ def authentication_error(code, stage):
     else:
         detail = guidance[code]
     # Only fixed, allowlisted messages may leave Google's credential-bearing response.
-    return SafetyError(
-        f"{stage} failed ({code}). {detail} "
-        "No credential was saved. Do not weaken Google security settings."
-    )
+    message = f"{stage} failed ({code}). {detail} "
+    if credential_saved:
+        message += (
+            "The verified credential is saved in macOS Keychain. "
+            "After the client is repaired, run keep-mcp-setup check; no new cookie is needed. "
+        )
+    else:
+        message += "No credential was saved by this attempt. "
+    message += "Do not weaken Google security settings."
+    if location:
+        message += f" Diagnostic location: {location}."
+    return SafetyError(message)
+
+
+def failure_location(error):
+    location = None
+    trace = error.__traceback__
+    while trace:
+        module = trace.tb_frame.f_globals.get("__name__")
+        if module in {"gkeepapi", "gkeepapi.node", "server.keep_api", "server.setup"}:
+            location = f"{module}:{trace.tb_lineno}"
+        trace = trace.tb_next
+    return location
 
 
 def failure_code(error):
@@ -113,17 +132,28 @@ def read_secret(prompt):
             ) from None
 
 
-def check_credentials(email, token):
+def check_credentials(email, token, *, save=False):
     keep = gkeepapi.Keep()
     keep._keep_api = BoundedKeepAPI()
     keep._media_api._session = BoundedSession()
     stage = "Keep authorization"
+    credential_saved = False
     try:
         keep.authenticate(email, token, sync=False)
+        if save:
+            store_credentials(email, token)
+            credential_saved = True
         stage = "Initial Keep read"
         keep.sync()
+    except SafetyError:
+        raise
     except Exception as error:
-        raise authentication_error(failure_code(error), stage) from None
+        raise authentication_error(
+            failure_code(error),
+            stage,
+            credential_saved=credential_saved,
+            location=failure_location(error),
+        ) from None
 
 
 def main():
@@ -172,8 +202,7 @@ def main():
         else:
             token = read_secret("Google master token (hidden): ")
         try:
-            check_credentials(email, token)
-            store_credentials(email, token)
+            check_credentials(email, token, save=True)
         finally:
             del token
         print(

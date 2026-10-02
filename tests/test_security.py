@@ -250,7 +250,7 @@ def test_setup_identifies_failing_stage_without_exposing_data(
 
 
 @pytest.mark.parametrize("failure", [None, "authorization", "read"])
-def test_setup_real_client_validates_authorization_and_read_before_storing(
+def test_setup_real_client_saves_after_authorization_before_read(
     monkeypatch, capsys, failure
 ):
     monkeypatch.setattr(
@@ -276,28 +276,56 @@ def test_setup_real_client_validates_authorization_and_read_before_storing(
         )
     monkeypatch.setattr(keep_api.BoundedKeepAPI, "changes", read)
 
-    def store_after_read(email, token):
+    def store_after_authorization(email, token):
         oauth.assert_called_once()
-        read.assert_called_once_with(target_version=None, nodes=[], labels=None)
+        read.assert_not_called()
         assert (email, token) == ("test@example.com", "secret-master-marker")
 
-    store = Mock(side_effect=store_after_read)
+    store = Mock(side_effect=store_after_authorization)
     monkeypatch.setattr(setup, "store_credentials", store)
     if failure:
         with pytest.raises(SystemExit):
             setup.main()
-        store.assert_not_called()
     else:
         setup.main()
-        store.assert_called_once()
     output = capsys.readouterr()
     assert "secret-" not in output.out + output.err
     assert "Token exchange succeeded" in output.out
     if failure == "authorization":
         assert "Keep authorization failed (NeedsBrowser)" in output.err
         read.assert_not_called()
-    elif failure == "read":
-        assert "Initial Keep read failed (HTTP_403)" in output.err
+        store.assert_not_called()
+    else:
+        store.assert_called_once()
+        read.assert_called_once_with(target_version=None, nodes=[], labels=None)
+        if failure == "read":
+            assert "Initial Keep read failed (HTTP_403)" in output.err
+            assert "saved in macOS Keychain" in output.err
+            assert "No credential was saved" not in output.err
+
+
+def test_setup_parse_diagnostic_excludes_note_data(monkeypatch):
+    raw = gkeepapi.node.Note().save(clean=False)
+    raw["title"] = "secret-note-marker"
+    raw["timestamps"] = None
+    monkeypatch.setattr(
+        setup.gpsoauth,
+        "perform_oauth",
+        Mock(return_value={"Auth": "secret-access-marker"}),
+    )
+    monkeypatch.setattr(
+        keep_api.BoundedKeepAPI,
+        "changes",
+        Mock(return_value={"nodes": [raw], "toVersion": "1", "truncated": False}),
+    )
+    with pytest.raises(storage.SafetyError) as caught:
+        setup.check_credentials("test@example.com", "secret-master-marker")
+    message = str(caught.value)
+    assert "Initial Keep read failed" in message
+    assert "Diagnostic location: gkeepapi.node:" in message
+    assert "secret" not in message
+    assert "test@example.com" not in message
+    assert "/Users/" not in message
 
 
 def test_http_failures_never_replay_keep_requests(monkeypatch):
