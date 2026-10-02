@@ -14,12 +14,17 @@ from server.storage import operation_lock, state_directory
 def test_stdio_errors_are_actionable_without_credentials(environment_token, tmp_path):
     async def check():
         env = dict(os.environ)
+        (tmp_path / "server.py").write_text('raise RuntimeError("wrong server module")')
+        env["PYTHONPATH"] = str(tmp_path)
         if environment_token:
             env["GOOGLE_MASTER_TOKEN"] = "secret-transport-marker"
         with (tmp_path / "stderr").open("w+") as errors:
             async with stdio_client(
                 StdioServerParameters(
-                    command=sys.executable, args=["-m", "server"], env=env
+                    command=sys.executable,
+                    args=["-I", "-m", "server"],
+                    env=env,
+                    cwd=str(tmp_path),
                 ),
                 errlog=errors,
             ) as (reader, writer):

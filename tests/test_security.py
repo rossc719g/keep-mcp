@@ -40,7 +40,7 @@ def test_keychain_only_ignores_env_backend_and_path(monkeypatch):
 
     backend = credentials.keychain()
     assert type(backend) is Keyring
-    assert backend.keychain == str(Path.home() / "Library/Keychains/login.keychain-db")
+    assert backend.keychain is None
 
 
 def test_no_plaintext_fallback_on_other_platform(monkeypatch):

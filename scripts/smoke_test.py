@@ -12,7 +12,7 @@ from mcp.client.stdio import stdio_client
 
 async def run(write_fixtures):
     async with stdio_client(
-        StdioServerParameters(command=sys.executable, args=["-m", "server"])
+        StdioServerParameters(command=sys.executable, args=["-I", "-m", "server"])
     ) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             await session.initialize()

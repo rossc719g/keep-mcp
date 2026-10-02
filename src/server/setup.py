@@ -88,7 +88,7 @@ def main():
         finally:
             del token
         print(
-            "Verified and stored in login Keychain. Configuration contains only the account email. The Keep MCP is ready."
+            "Verified and stored in macOS Keychain. Configuration contains only the account email. The Keep MCP is ready."
         )
     except SafetyError as error:
         print(str(error), file=sys.stderr)

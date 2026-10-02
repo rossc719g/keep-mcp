@@ -25,7 +25,12 @@ The initial resolution uses `gkeepapi 0.17.1`, `gpsoauth 2.0.0`, `mcp 2.2.0`,
 and `requests 2.34.2`. Their authentication, sync, mutation serialization,
 request/retry, and media code was inspected. The selected Keychain adapter is
 `keyring 25.7.0`'s explicit macOS backend, which calls Security.framework.
-Dynamic backend selection and plaintext backends are not used.
+Dynamic backend selection and plaintext backends are not used. Keyring 25.7 uses
+SecItem APIs and ignores custom keychain paths; the adapter explicitly clears
+`KEYCHAIN_PATH` selection and uses the normal macOS user Keychain. A new-item
+test through SSH returned macOS status -25308 (interaction not allowed), so
+credential setup must run in the user's local Terminal and honor normal Keychain
+prompts.
 
 The first advisory scan found the same pip advisory twice (`PYSEC-2026-3721` /
 `CVE-2026-13346`) in the development interpreter's `pip 26.1.2`; no application
@@ -61,11 +66,13 @@ process memory while in use; the service does not persist a note cache.
 
 ## Verification
 
-115 tests pass with 89% source coverage on the development Mac, including the
-original cases adapted to the guarded API. Tests cover the real stdio MCP
-handshake and actionable credential errors; token redaction; Keychain-only
-selection; every existing-note write boundary; stale versions; cross-process
-locking; deletion expiry, target binding and reuse; failed-write cache discard;
-audit failure; and media containment. A wheel and source distribution build
-successfully. Real-account verification requires local Google sign-in; offline
-tests do not establish that Google will accept a particular account.
+115 tests pass with 89.7% source coverage on both the development Mac and
+Diprotodon (Python 3.14.6 and 3.12.13), including the original cases adapted to
+the guarded API. Both dependency scans report no known vulnerabilities. Tests
+cover the real stdio MCP handshake and actionable credential errors; token
+redaction; Keychain-only selection; every existing-note write boundary; stale
+versions; cross-process locking; deletion expiry, target binding and reuse;
+failed-write cache discard; audit failure; and media containment. A wheel and
+source distribution build successfully. Real-account verification requires local
+Google sign-in; offline tests do not establish that Google will accept a
+particular account.

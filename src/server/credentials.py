@@ -25,7 +25,7 @@ def keychain():
 
     backend = Keyring()
     # Ignore KEYCHAIN_PATH and dynamic backend selection, including plaintext plugins.
-    backend.keychain = str(Path.home() / "Library/Keychains/login.keychain-db")
+    backend.keychain = None
     return backend
 
 
@@ -73,7 +73,7 @@ def master_token(email: str) -> str:
         raise
     except Exception:
         raise SafetyError(
-            "Cannot access the Keep token in login Keychain. Unlock it or approve the normal macOS access prompt; do not weaken Keychain permissions."
+            "Cannot access the Keep token in macOS Keychain. Unlock it or approve the normal macOS access prompt locally; do not weaken Keychain permissions."
         ) from None
     if not token:
         raise SafetyError(

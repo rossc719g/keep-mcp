@@ -38,7 +38,7 @@ Follow the
 in your own browser. Complete Google's normal sign-in and verification yourself.
 At the helper's hidden prompt, enter the resulting `oauth_token` cookie. It is
 exchanged with Google, validated against Keep, then the master token is saved in
-**login Keychain**, service **`local.keep-mcp.google-master-token`**, with your
+**macOS Keychain**, service **`local.keep-mcp.google-master-token`**, with your
 Google account email as the Keychain account. The short-lived browser token is
 not saved. Clear the clipboard if you used it to transfer the token.
 
@@ -52,7 +52,7 @@ hidden interactive input. If you already have a master token, use
 ```
 
 `~/.config/keep-mcp/config.json` contains only the account email and has mode
-`0600`, inside a `0700` directory. The backend is explicitly the macOS login
+`0600`, inside a `0700` directory. The backend is explicitly the native macOS
 Keychain; environment-selected or plaintext backends cannot replace it. `.env`
 is never read, and a nonempty `GOOGLE_MASTER_TOKEN` environment variable is
 rejected. Normal Keychain prompts and lock state still apply. Do not disable
@@ -70,7 +70,7 @@ Register the absolute executable path; no credential environment variables are
 needed:
 
 ```sh
-codex mcp add keep-mcp -- "$HOME/.local/share/keep-mcp/.venv/bin/keep-mcp"
+codex mcp add keep-mcp -- "$HOME/.local/share/keep-mcp/.venv/bin/python" -I -m server
 ```
 
 An equivalent generic MCP configuration is:
@@ -79,15 +79,18 @@ An equivalent generic MCP configuration is:
 {
   "mcpServers": {
     "keep-mcp": {
-      "command": "/Users/YOUR_ACCOUNT/.local/share/keep-mcp/.venv/bin/keep-mcp"
+      "command": "/Users/YOUR_ACCOUNT/.local/share/keep-mcp/.venv/bin/python",
+      "args": ["-I", "-m", "server"]
     }
   }
 }
 ```
 
-Use your actual home directory. Start a new client session after registration.
-Tools are discoverable before sign-in; reads clearly explain missing credentials
-instead of silently returning an empty collection.
+Use your actual home directory. Isolated Python mode prevents the working
+directory or `PYTHONPATH` from selecting a different server module. Start a new
+client session after registration. Tools are discoverable before sign-in; reads
+clearly explain missing credentials instead of silently returning an empty
+collection.
 
 ## Optional ChatGPT connection
 
@@ -115,7 +118,7 @@ agent if remote access should return at login. In ChatGPT, create a personal MCP
 App using that tunnel and keep normal write approval prompts. Remote clients
 receive note contents only through requested tool calls; the tunnel connection
 still carries that data to the authorized client. The Mac must be awake, online,
-and able to read its login Keychain. Phone access uses the same ChatGPT
+and able to read its macOS Keychain. Phone access uses the same ChatGPT
 connection.
 
 ## Write policy

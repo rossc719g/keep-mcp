@@ -30,7 +30,7 @@ def main():
     ):
         parser.error("Runtime key must be an owner-only regular file")
     binary = args.binary.expanduser().absolute()
-    command = shlex.join([sys.executable, "-m", "server"])
+    command = shlex.join([sys.executable, "-I", "-m", "server"])
     env = dict(os.environ)
     env.pop("CONTROL_PLANE_API_KEY", None)
     env.pop("GOOGLE_MASTER_TOKEN", None)
