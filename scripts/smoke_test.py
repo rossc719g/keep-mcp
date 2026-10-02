@@ -55,6 +55,7 @@ async def run(write_fixtures):
                 },
             )
             assert stale.is_error and "Conflict" in stale.content[0].text
+            note = await call("get_note", note_id=note["id"])
             for name, extra in [
                 ("set_note_color", {"color": "BLUE"}),
                 ("pin_note", {"pinned": True}),
