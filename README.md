@@ -44,7 +44,9 @@ not saved. Clear the clipboard if you used it to transfer the token.
 
 The Google page may keep loading after **I agree**; the linked instructions say
 to continue by finding the cookie. If exchange fails, the helper displays only a
-recognized error code and fixed guidance, never Google's raw response. A
+recognized error code and fixed guidance, never Google's raw response. It
+distinguishes token exchange, Keep authorization, and the initial Keep read;
+network or data-parsing failures are not reported as rejected logins. A
 `BadAuthentication` result can be retried with a fresh cookie for the same
 account; copy only its Value. `NeedsBrowser` requires completing Google's normal
 verification. Unrecognized errors remain redacted. Share only the helper's error

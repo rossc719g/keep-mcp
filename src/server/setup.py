@@ -9,16 +9,17 @@ import warnings
 
 import gkeepapi
 import gpsoauth
+import requests
 
 from .credentials import account_email, master_token, store_credentials, validate_email
 from .keep_api import BoundedKeepAPI, BoundedSession
 from .storage import SafetyError
 
 
-def exchange_error(response):
+def authentication_error(code, stage):
     guidance = {
         "BadAuthentication": (
-            "Google rejected the browser credential. Use a fresh oauth_token cookie "
+            "Google rejected the credential at this stage. Use a fresh oauth_token cookie "
             "from the same Google account as the email entered here. Copy only its Value."
         ),
         "NeedsBrowser": (
@@ -39,18 +40,66 @@ def exchange_error(response):
         ),
         "ServiceDisabled": "Google has disabled access to this service for the account.",
         "AccountDisabled": "Google reports that the account is disabled.",
+        "HTTP_400": "Google rejected the request format; check client compatibility.",
+        "HTTP_401": "Google rejected the access token for this request.",
+        "HTTP_403": "Google refused access to Keep for this request.",
+        "HTTP_404": "The requested Google service endpoint was not found.",
+        "HTTP_429": "Google rate-limited the request. Stop and wait before trying again.",
+        "HTTP_500": "Google reported a server error. Try again later.",
+        "HTTP_502": "Google reported a gateway error. Try again later.",
+        "HTTP_503": "Google reported that the service is unavailable. Try again later.",
+        "HTTP_504": "Google reported a gateway timeout. Try again later.",
+        "NetworkTimeout": "The request timed out; this does not establish a rejected login.",
+        "NetworkConnectionFailed": "The connection failed; check the Mac's normal network access.",
+        "TLSFailure": "The secure connection failed. Keep certificate validation enabled.",
+        "ParseException": "The client could not parse Google's Keep data; check client compatibility.",
+        "ResyncRequiredException": "Google requested a full Keep resync during the initial read.",
+        "UpgradeRecommendedException": "Google requested a newer Keep client.",
+        "KeyError": "A required field was missing from the response; check client compatibility.",
+        "TypeError": "The client encountered an incompatible value; check client compatibility.",
+        "ValueError": "The client could not interpret a response value; check client compatibility.",
+        "AttributeError": "The client encountered an incompatible object; check client compatibility.",
     }
-    code = response.get("Error")
     if not isinstance(code, str) or code not in guidance:
         code = "UnrecognizedResponse"
-        detail = "Google returned no master token and no recognized error code."
+        detail = "The failure has no recognized diagnostic. Raw details remain hidden."
     else:
         detail = guidance[code]
     # Only fixed, allowlisted messages may leave Google's credential-bearing response.
     return SafetyError(
-        f"Google token exchange failed ({code}). {detail} "
+        f"{stage} failed ({code}). {detail} "
         "No credential was saved. Do not weaken Google security settings."
     )
+
+
+def failure_code(error):
+    if isinstance(error, gkeepapi.exception.BrowserLoginRequiredException):
+        return "NeedsBrowser"
+    if isinstance(error, gkeepapi.exception.LoginException):
+        return error.args[0] if error.args else None
+    if isinstance(error, requests.HTTPError):
+        status = getattr(error.response, "status_code", None)
+        return f"HTTP_{status}" if type(status) is int else None
+    if isinstance(error, gkeepapi.exception.APIException):
+        return f"HTTP_{error.code}" if type(error.code) is int else None
+    if isinstance(error, requests.exceptions.SSLError):
+        return "TLSFailure"
+    if isinstance(error, requests.Timeout):
+        return "NetworkTimeout"
+    if isinstance(error, requests.ConnectionError):
+        return "NetworkConnectionFailed"
+    for error_type in (
+        gkeepapi.exception.ParseException,
+        gkeepapi.exception.ResyncRequiredException,
+        gkeepapi.exception.UpgradeRecommendedException,
+        KeyError,
+        TypeError,
+        ValueError,
+        AttributeError,
+    ):
+        if isinstance(error, error_type):
+            return error_type.__name__
+    return None
 
 
 def read_secret(prompt):
@@ -68,14 +117,13 @@ def check_credentials(email, token):
     keep = gkeepapi.Keep()
     keep._keep_api = BoundedKeepAPI()
     keep._media_api._session = BoundedSession()
+    stage = "Keep authorization"
     try:
-        keep.authenticate(email, token)
-    except Exception:
-        raise SafetyError(
-            "Google did not accept this Keep login. Complete Google's normal verification "
-            "or obtain a fresh token. Do not disable MFA, device management, or macOS protections. "
-            "No credential was written."
-        ) from None
+        keep.authenticate(email, token, sync=False)
+        stage = "Initial Keep read"
+        keep.sync()
+    except Exception as error:
+        raise authentication_error(failure_code(error), stage) from None
 
 
 def main():
@@ -108,14 +156,19 @@ def main():
             try:
                 response = gpsoauth.exchange_token(email, oauth, secrets.token_hex(8))
                 token = response.get("Token")
-            except Exception:
-                raise SafetyError(
-                    "Google token exchange failed. No credential was saved. Follow Google's normal sign-in verification and try again."
+            except Exception as error:
+                raise authentication_error(
+                    failure_code(error), "Google token exchange"
                 ) from None
             finally:
                 del oauth
             if not token:
-                raise exchange_error(response)
+                raise authentication_error(
+                    response.get("Error"), "Google token exchange"
+                )
+            print(
+                "Token exchange succeeded. Checking Keep authorization and first read."
+            )
         else:
             token = read_secret("Google master token (hidden): ")
         try:

@@ -184,6 +184,122 @@ def test_setup_exchange_exception_never_exposes_credentials(monkeypatch, capsys)
     store.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "error, code",
+    [
+        (gkeepapi.exception.LoginException("BadAuthentication"), "BadAuthentication"),
+        (
+            gkeepapi.exception.BrowserLoginRequiredException("secret-url-marker"),
+            "NeedsBrowser",
+        ),
+        (
+            gkeepapi.exception.LoginException("secret-token-marker"),
+            "UnrecognizedResponse",
+        ),
+        (gkeepapi.exception.APIException(403, "secret-note-marker"), "HTTP_403"),
+        (
+            requests.HTTPError(
+                "secret-token-marker", response=SimpleNamespace(status_code=401)
+            ),
+            "HTTP_401",
+        ),
+        (requests.Timeout("secret-token-marker"), "NetworkTimeout"),
+        (requests.ConnectionError("secret-token-marker"), "NetworkConnectionFailed"),
+        (requests.exceptions.SSLError("secret-token-marker"), "TLSFailure"),
+        (
+            gkeepapi.exception.ParseException("secret-note-marker", {"text": "secret"}),
+            "ParseException",
+        ),
+        (
+            gkeepapi.exception.UpgradeRecommendedException("secret"),
+            "UpgradeRecommendedException",
+        ),
+        (
+            gkeepapi.exception.ResyncRequiredException("secret"),
+            "ResyncRequiredException",
+        ),
+        (KeyError("secret-note-marker"), "KeyError"),
+        (TypeError("secret-note-marker"), "TypeError"),
+        (ValueError("secret-note-marker"), "ValueError"),
+        (AttributeError("secret-note-marker"), "AttributeError"),
+        (RuntimeError("secret-token-marker"), "UnrecognizedResponse"),
+    ],
+)
+@pytest.mark.parametrize("failing_stage", ["Keep authorization", "Initial Keep read"])
+def test_setup_identifies_failing_stage_without_exposing_data(
+    monkeypatch, error, code, failing_stage
+):
+    keep = Mock()
+    if failing_stage == "Keep authorization":
+        keep.authenticate.side_effect = error
+    else:
+        keep.sync.side_effect = error
+    monkeypatch.setattr(setup.gkeepapi, "Keep", lambda: keep)
+    with pytest.raises(storage.SafetyError) as caught:
+        setup.check_credentials("test@example.com", "secret-master-marker")
+    message = str(caught.value)
+    assert message.startswith(f"{failing_stage} failed ({code}).")
+    assert "secret" not in message
+    keep.authenticate.assert_called_once_with(
+        "test@example.com", "secret-master-marker", sync=False
+    )
+    if failing_stage == "Keep authorization":
+        keep.sync.assert_not_called()
+    else:
+        keep.sync.assert_called_once_with()
+
+
+@pytest.mark.parametrize("failure", [None, "authorization", "read"])
+def test_setup_real_client_validates_authorization_and_read_before_storing(
+    monkeypatch, capsys, failure
+):
+    monkeypatch.setattr(
+        setup.sys, "argv", ["keep-mcp-setup", "exchange", "--email", "test@example.com"]
+    )
+    monkeypatch.setattr(setup.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(setup.getpass, "getpass", lambda _: "secret-browser-marker")
+    monkeypatch.setattr(
+        setup.gpsoauth,
+        "exchange_token",
+        Mock(return_value={"Token": "secret-master-marker"}),
+    )
+    oauth = Mock(
+        return_value={"Error": "NeedsBrowser"}
+        if failure == "authorization"
+        else {"Auth": "secret-access-marker"}
+    )
+    monkeypatch.setattr(setup.gpsoauth, "perform_oauth", oauth)
+    read = Mock(return_value={"toVersion": "1", "truncated": False})
+    if failure == "read":
+        read.side_effect = requests.HTTPError(
+            "secret-response-marker", response=SimpleNamespace(status_code=403)
+        )
+    monkeypatch.setattr(keep_api.BoundedKeepAPI, "changes", read)
+
+    def store_after_read(email, token):
+        oauth.assert_called_once()
+        read.assert_called_once_with(target_version=None, nodes=[], labels=None)
+        assert (email, token) == ("test@example.com", "secret-master-marker")
+
+    store = Mock(side_effect=store_after_read)
+    monkeypatch.setattr(setup, "store_credentials", store)
+    if failure:
+        with pytest.raises(SystemExit):
+            setup.main()
+        store.assert_not_called()
+    else:
+        setup.main()
+        store.assert_called_once()
+    output = capsys.readouterr()
+    assert "secret-" not in output.out + output.err
+    assert "Token exchange succeeded" in output.out
+    if failure == "authorization":
+        assert "Keep authorization failed (NeedsBrowser)" in output.err
+        read.assert_not_called()
+    elif failure == "read":
+        assert "Initial Keep read failed (HTTP_403)" in output.err
+
+
 def test_http_failures_never_replay_keep_requests(monkeypatch):
     api = keep_api.BoundedKeepAPI()
     response = Mock()
